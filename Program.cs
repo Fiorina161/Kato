@@ -22,11 +22,11 @@ internal static class Program
     {
         Console.OutputEncoding = Console.InputEncoding = Encoding.UTF8;
 
-        var configManager = new ConfigManager(CONFIG_FILE_NAME);
         var historyManager = new RecentHistoryManager(maxRecent: 5);
+        var configManager = new ConfigManager(CONFIG_FILE_NAME);
         var renderer = new UiRenderer();
 
-        var config = TryLoad(configManager, out var status) ?? new Configuration([], []);
+        var config = TryLoad(configManager) ?? new Configuration([]);
         historyManager.Load(configManager.ConfigPath);
         historyManager.Prune(config);
         historyManager.Save(configManager.ConfigPath, out _);
@@ -34,7 +34,7 @@ internal static class Program
         // Track selection state independently for each category so users
         // don't lose their position when switching between categories.
         var selectedCategory = 0;
-        var focusOnCategories = true;
+        var inCategoryView = historyManager.Recent.Count == 0;
         var selectedTaskByCategory = new Dictionary<string, int>(StringComparer.CurrentCultureIgnoreCase);
 
         while (true)
@@ -43,7 +43,7 @@ internal static class Program
 
             if (categories.Count == 0)
             {
-                if (HandleEmptyConfig(configManager, ref config, historyManager, ref status))
+                if (HandleEmptyConfig(configManager, ref config, historyManager))
                     continue;
                 break;
             }
@@ -55,19 +55,17 @@ internal static class Program
             selectedTaskByCategory.TryAdd(categoryName, 0);
             selectedTaskByCategory[categoryName] = Math.Clamp(selectedTaskByCategory[categoryName], 0, Math.Max(0, tasks.Count - 1));
 
-            var notes = config.Notes.Values.SelectMany(n => n).ToList();
-
-            renderer.Render(configManager.ConfigPath, categories, selectedCategory,
-                tasks.Select(t => t.DisplayName).ToList(), selectedTaskByCategory[categoryName], focusOnCategories, status, notes);
+            if (inCategoryView)
+                renderer.Render(configManager.ConfigPath, categories, selectedCategory, null);
+            else
+                renderer.Render(configManager.ConfigPath, tasks.Select(t => t.DisplayName).ToList(), selectedTaskByCategory[categoryName], categoryName);
 
             var key = Console.ReadKey(intercept: true).Key;
 
-            if (key is ConsoleKey.Q or ConsoleKey.Escape)
-                break;
-
-            if (key is ConsoleKey.Tab or ConsoleKey.LeftArrow or ConsoleKey.RightArrow)
+            if (key == ConsoleKey.Escape)
             {
-                focusOnCategories = !focusOnCategories;
+                if (inCategoryView) break;
+                inCategoryView = true;
                 continue;
             }
 
@@ -75,27 +73,19 @@ internal static class Program
             {
                 using var process = ProcessLauncher.OpenFileEditor(configManager.ConfigPath);
                 if (process != null)
-                {
-                    status = Reload(configManager, historyManager, ref config, out var reloadStatus)
-                        ? $"[green]{reloadStatus}[/]" : $"[red]{reloadStatus}[/]";
-                }
-                else
-                {
-                    status = "[red]Could not open editor[/]";
-                }
+                    Reload(configManager, historyManager, ref config);
                 continue;
             }
 
             if (key == ConsoleKey.R)
             {
-                status = Reload(configManager, historyManager, ref config, out var reloadStatus)
-                    ? $"[green]{reloadStatus}[/]" : $"[red]{reloadStatus}[/]";
+                Reload(configManager, historyManager, ref config);
                 continue;
             }
 
             if (key == ConsoleKey.UpArrow)
             {
-                if (focusOnCategories)
+                if (inCategoryView)
                     selectedCategory = (selectedCategory - 1 + categories.Count) % categories.Count;
                 else if (tasks.Count > 0)
                     selectedTaskByCategory[categoryName] = (selectedTaskByCategory[categoryName] - 1 + tasks.Count) % tasks.Count;
@@ -104,7 +94,7 @@ internal static class Program
 
             if (key == ConsoleKey.DownArrow)
             {
-                if (focusOnCategories)
+                if (inCategoryView)
                     selectedCategory = (selectedCategory + 1) % categories.Count;
                 else if (tasks.Count > 0)
                     selectedTaskByCategory[categoryName] = (selectedTaskByCategory[categoryName] + 1) % tasks.Count;
@@ -113,32 +103,21 @@ internal static class Program
 
             if (key == ConsoleKey.Enter)
             {
-                if (tasks.Count == 0)
+                if (inCategoryView)
                 {
-                    status = "No task in selected category";
+                    inCategoryView = false;
                     continue;
                 }
 
+                if (tasks.Count == 0)
+                    continue;
+
                 var item = tasks[selectedTaskByCategory[categoryName]];
-                try
-                {
-                    var process = ProcessLauncher.Run(item.Command) ?? throw new Exception("Unable to start editor");
-                    var pid = process.Id;
-                    var command = item.Command;
-
-                    historyManager.Add(item);
-                    historyManager.Prune(config);
-
-                    // Inform the user about the launch even if history saving fails,
-                    // since the main action (launching the process) succeeded.
-                    status = historyManager.Save(configManager.ConfigPath, out var err)
-                        ? $"[green]Running[/] (PID {pid}): {Markup.Escape(command)}"
-                        : $"[red]Failed[/] (PID {pid}): {Markup.Escape(err)}";
-                }
-                catch (Exception ex)
-                {
-                    status = $"Launch failed for '{item.Command}': {ex.Message}";
-                }
+                ProcessLauncher.Run(item.Command);
+                historyManager.Add(item);
+                historyManager.Prune(config);
+                historyManager.Save(configManager.ConfigPath, out _);
+                break;
             }
         }
 
@@ -150,17 +129,15 @@ internal static class Program
 	 * Returns null on failure to allow the application to continue with an empty
 	 * config rather than crashing, giving users a chance to fix the file.
 	 */
-    private static Configuration? TryLoad(ConfigManager manager, out string status)
+    private static Configuration? TryLoad(ConfigManager manager)
     {
         try
         {
-            status = "Ready";
             return manager.Load();
         }
         catch (Exception ex)
         {
             AnsiConsole.MarkupLine($"[red]Failed to parse config:[/] {Markup.Escape(ex.Message)}");
-            status = ex.Message;
             return null;
         }
     }
@@ -170,23 +147,16 @@ internal static class Program
 	 * any changes. Used after the user edits the config file to bring those
 	 * changes into the running application.
 	 */
-    private static bool Reload(ConfigManager manager, RecentHistoryManager history, ref Configuration config, out string status)
+    private static void Reload(ConfigManager manager, RecentHistoryManager history, ref Configuration config)
     {
         try
         {
             config = manager.Load();
             history.Load(manager.ConfigPath);
             history.Prune(config);
-            status = history.Save(manager.ConfigPath, out var err)
-                ? "Configuration reloaded"
-                : $"Configuration reloaded, but recent cleanup failed: {err}";
-            return true;
+            history.Save(manager.ConfigPath, out _);
         }
-        catch (Exception ex)
-        {
-            status = $"Reload failed: {ex.Message}";
-            return false;
-        }
+        catch { }
     }
 
     /**
@@ -194,21 +164,21 @@ internal static class Program
 	 * the user options to fix the config rather than immediately exiting.
 	 * This prevents frustration from accidentally starting with an empty config file.
 	 */
-    private static bool HandleEmptyConfig(ConfigManager manager, ref Configuration config, RecentHistoryManager history, ref string status)
+    private static bool HandleEmptyConfig(ConfigManager manager, ref Configuration config, RecentHistoryManager history)
     {
         AnsiConsole.Clear();
         AnsiConsole.MarkupLine("[yellow]No categories found in config.[/]");
-        AnsiConsole.MarkupLine("Press E to edit, Q to quit.");
+        AnsiConsole.MarkupLine("Press E to edit, Esc to quit.");
 
         var key = Console.ReadKey(intercept: true).Key;
 
-        if (key is ConsoleKey.Q or ConsoleKey.Escape)
+        if (key == ConsoleKey.Escape)
             return false;
 
         if (key == ConsoleKey.E)
             using (var process = ProcessLauncher.OpenFileEditor(manager.ConfigPath))
                 if (process != null)
-                    Reload(manager, history, ref config, out status);
+                    Reload(manager, history, ref config);
 
         return true;
     }

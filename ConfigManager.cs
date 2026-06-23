@@ -27,7 +27,6 @@ internal sealed class ConfigManager(string filename)
 	public Configuration Load()
 	{
 		var sections = new Dictionary<string, List<TaskItem>>(StringComparer.CurrentCultureIgnoreCase);
-		var notes = new Dictionary<string, List<string>>(StringComparer.CurrentCultureIgnoreCase);
 		string? currentSection = null;
 
 		foreach (var (line, i) in File.ReadAllLines(ConfigPath).Select((l, i) => (l, i)))
@@ -48,14 +47,8 @@ internal sealed class ConfigManager(string filename)
 				continue;
 			}
 
-			// Notes are displayed separately in the UI
 			if (trimmed.StartsWith("--"))
-			{
-				var noteSection = currentSection ?? string.Empty;
-				notes.TryAdd(noteSection, []);
-				notes[noteSection].Add(trimmed[2..].Trim());
 				continue;
-			}
 
 			// Parse task definition: validate format and reject malformed entries early
 			var eq = trimmed.IndexOf('=');
@@ -74,7 +67,7 @@ internal sealed class ConfigManager(string filename)
 			sections[currentSection].Add(new TaskItem(name, command));
 		}
 
-		return new Configuration(sections, notes);
+		return new Configuration(sections);
 	}
 
 	/**
