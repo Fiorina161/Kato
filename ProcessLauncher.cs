@@ -25,8 +25,9 @@ internal static class ProcessLauncher
 		if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 		{
 			info.FileName = "cmd.exe";
-				info.Arguments = $"/S /C \"{command}\"";
-				return info;
+			info.Arguments = $"/S /C \"{command}\"";
+			info.CreateNoWindow = true;
+			return info;
 		}
 
 		info.FileName = "/bin/sh";
