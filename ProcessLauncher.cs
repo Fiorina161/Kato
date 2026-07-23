@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Kato;
@@ -26,7 +26,10 @@ internal static class ProcessLauncher
 		{
 			info.FileName = "cmd.exe";
 			info.Arguments = $"/S /C \"{command}\"";
-			info.CreateNoWindow = true;
+			// Let the child inherit Kato's console so interactive commands
+			// (e.g. sqlplus prompting for substitution variables) can read
+			// the user's keystrokes. Setting CreateNoWindow here would give
+			// the child its own hidden console, blocking stdin and Ctrl-C.
 			return info;
 		}
 

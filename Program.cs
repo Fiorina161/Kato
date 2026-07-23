@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using Spectre.Console;
 
 namespace Kato;
@@ -113,7 +113,13 @@ internal static class Program
                     continue;
 
                 var item = tasks[selectedTaskByCategory[categoryName]];
-                ProcessLauncher.Run(item.Command);
+
+                // Hand the console over to the command and block until it
+                // finishes. Waiting keeps Kato from clearing the screen and
+                // exiting while an interactive command (e.g. sqlplus) is still
+                // reading input, which would otherwise garble the session.
+                using (var process = ProcessLauncher.Run(item.Command))
+                    process?.WaitForExit();
                 historyManager.Add(item);
                 historyManager.Prune(config);
                 historyManager.Save(configManager.ConfigPath, out _);
