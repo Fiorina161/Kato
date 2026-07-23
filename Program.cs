@@ -34,7 +34,9 @@ internal static class Program
         // Track selection state independently for each category so users
         // don't lose their position when switching between categories.
         var selectedCategory = 0;
-        var inCategoryView = historyManager.Recent.Count == 0;
+        // Always start in the outermost category menu, even when there
+        // is recent history, rather than dropping into the recent list.
+        var inCategoryView = true;
         var selectedTaskByCategory = new Dictionary<string, int>(StringComparer.CurrentCultureIgnoreCase);
 
         while (true)
